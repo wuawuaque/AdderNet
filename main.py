@@ -25,6 +25,7 @@ os.makedirs(args.output_dir, exist_ok=True)
 
 acc = 0
 acc_best = 0
+epochsum =400
 
 transform_train = transforms.Compose([
     transforms.RandomCrop(32, padding=4),
@@ -53,7 +54,8 @@ optimizer = torch.optim.SGD(net.parameters(), lr=0.1, momentum=0.9, weight_decay
 
 def adjust_learning_rate(optimizer, epoch):
     """For resnet, the lr starts from 0.1, and is divided by 10 at 80 and 120 epochs"""
-    lr = 0.05 * (1+math.cos(float(epoch)/400*math.pi))
+    # lr = 0.05 * (1+math.cos(float(epoch)/400*math.pi))
+    lr = 0.05 * (1+math.cos(float(epoch)/epochsum*math.pi))
     for param_group in optimizer.param_groups:
         param_group['lr'] = lr
         
@@ -108,7 +110,7 @@ def train_and_test(epoch):
  
 def main():
     # epoch = 400
-    epoch = 40
+    epoch = epochsum
     for e in range(1, epoch):
         train_and_test(e)
     torch.save(net,args.output_dir + 'addernet')
