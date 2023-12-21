@@ -12,7 +12,7 @@ import torch.utils.data
 from torch import nn
 from torch.nn import functional as F
 from nearest_embed import NearestEmbed, NearestEmbedEMA
-
+from vars import *
 
 
 def conv3x3(in_planes, out_planes, stride=1):
@@ -147,19 +147,28 @@ class ResBlock(nn.Module):
 
         if mid_channels is None:
             mid_channels = out_channels
-
-        layers = [
-            nn.ReLU(),
-            nn.Conv2d(in_channels, mid_channels,
-                      kernel_size=3, stride=1, padding=1),
-            # adder.adder2d(in_channels, mid_channels,
-            #           kernel_size=3, stride=1, padding=1),
-            nn.ReLU(),
-            nn.Conv2d(mid_channels, out_channels,
-                      kernel_size=1, stride=1, padding=0)
-            # adder.adder2d(mid_channels, out_channels,
-            #           kernel_size=1, stride=1, padding=0)        
-        ]
+        if cnnlayertype=='conv':
+            layers = [
+                nn.ReLU(),
+                nn.Conv2d(in_channels, mid_channels,
+                          kernel_size=3, stride=1, padding=1),
+                # adder.adder2d(in_channels, mid_channels,
+                #         kernel_size=3, stride=1, padding=1),
+                nn.ReLU(),
+                nn.Conv2d(mid_channels, out_channels,
+                          kernel_size=1, stride=1, padding=0)
+                # adder.adder2d(mid_channels, out_channels,
+                #         kernel_size=1, stride=1, padding=0)        
+            ]
+        elif cnnlayertype=='adder':
+            layers = [
+                nn.ReLU(),
+                adder.adder2d(in_channels, mid_channels,
+                        kernel_size=3, stride=1, padding=1),
+                nn.ReLU(),
+                adder.adder2d(mid_channels, out_channels,
+                        kernel_size=1, stride=1, padding=0)        
+            ]
         if bn:
             layers.insert(2, nn.BatchNorm2d(out_channels))
         self.convs = nn.Sequential(*layers)
@@ -169,11 +178,11 @@ class ResBlock(nn.Module):
 
 
 class CVAE(AbstractAutoEncoder):
-    def __init__(self, d, kl_coef=0.1, **kwargs):
+    def __init__(self, d, kl_coef=0.1, num_channels=n_channels, **kwargs):
         super(CVAE, self).__init__()
 
         self.encoder = nn.Sequential(
-            nn.Conv2d(3, d // 2, kernel_size=4,
+            nn.Conv2d(num_channels, d // 2, kernel_size=4,
                       stride=2, padding=1, bias=False),
             nn.BatchNorm2d(d // 2),
             nn.ReLU(inplace=True),
@@ -195,7 +204,7 @@ class CVAE(AbstractAutoEncoder):
                                stride=2, padding=1, bias=False),
             nn.BatchNorm2d(d//2),
             nn.ReLU(inplace=True),
-            nn.ConvTranspose2d(d // 2, 3, kernel_size=4,
+            nn.ConvTranspose2d(d // 2, num_channels, kernel_size=4,
                                stride=2, padding=1, bias=False),
         )
         self.f = 8
@@ -257,23 +266,36 @@ class CVAE(AbstractAutoEncoder):
 
 
 class VQ_CVAE(nn.Module):
-    def __init__(self, d, k=8, bn=True, vq_coef=1, commit_coef=0.5, num_channels=3, **kwargs):
+    def __init__(self, d, k, bn=True, vq_coef=1, commit_coef=0.5, num_channels=n_channels, **kwargs):
         super(VQ_CVAE, self).__init__()
-
-        self.encoder = nn.Sequential(
-            nn.Conv2d(num_channels, d, kernel_size=4, stride=2, padding=1),
-            # adder.adder2d(num_channels, d, kernel_size=4, stride=2, padding=1),
-            nn.BatchNorm2d(d),
-            nn.ReLU(inplace=True),
-            nn.Conv2d(d, d, kernel_size=4, stride=2, padding=1),
-            # adder.adder2d(d, d, kernel_size=4, stride=2, padding=1),
-            nn.BatchNorm2d(d),
-            nn.ReLU(inplace=True),
-            ResBlock(d, d, bn=bn),
-            nn.BatchNorm2d(d),
-            ResBlock(d, d, bn=bn),
-            nn.BatchNorm2d(d),
-        )
+        if cnnlayertype=='conv':
+            self.encoder = nn.Sequential(
+                nn.Conv2d(num_channels, d, kernel_size=4, stride=2, padding=1),
+                # adder.adder2d(num_channels, d, kernel_size=4, stride=2, padding=1),
+                nn.BatchNorm2d(d),
+                nn.ReLU(inplace=True),
+                nn.Conv2d(d, d, kernel_size=4, stride=2, padding=1),
+                # adder.adder2d(d, d, kernel_size=4, stride=2, padding=1),
+                nn.BatchNorm2d(d),
+                nn.ReLU(inplace=True),
+                ResBlock(d, d, bn=bn),
+                nn.BatchNorm2d(d),
+                ResBlock(d, d, bn=bn),
+                nn.BatchNorm2d(d),
+            )
+        elif cnnlayertype=='adder':
+            self.encoder = nn.Sequential(
+                adder.adder2d(num_channels, d, kernel_size=4, stride=2, padding=1),
+                nn.BatchNorm2d(d),
+                nn.ReLU(inplace=True),
+                adder.adder2d(d, d, kernel_size=4, stride=2, padding=1),
+                nn.BatchNorm2d(d),
+                nn.ReLU(inplace=True),
+                ResBlock(d, d, bn=bn),
+                nn.BatchNorm2d(d),
+                ResBlock(d, d, bn=bn),
+                nn.BatchNorm2d(d),
+            )
         self.decoder = nn.Sequential(
             ResBlock(d, d),
             nn.BatchNorm2d(d),
@@ -345,4 +367,4 @@ class VQ_CVAE(nn.Module):
 
 
 def convVAE(**kwargs):
-    return VQ_CVAE(16, **kwargs)
+    return VQ_CVAE(d=emb_dim,k=emb_num,commit_coef=commit_beta,**kwargs)
