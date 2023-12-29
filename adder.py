@@ -58,6 +58,7 @@ class adder2d(nn.Module):
         self.output_channel = output_channel
         self.kernel_size = kernel_size
         self.adder = torch.nn.Parameter(nn.init.normal_(torch.randn(output_channel,input_channel,kernel_size,kernel_size)))
+        # # 上面是对加法网络进行的修改，目的是提高运行速度
         self.bias = bias
         if bias:
             self.b = torch.nn.Parameter(nn.init.uniform_(torch.zeros(output_channel)))

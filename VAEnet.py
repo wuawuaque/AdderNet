@@ -283,6 +283,7 @@ class VQ_CVAE(nn.Module):
                 ResBlock(d, d, bn=bn),
                 nn.BatchNorm2d(d),
             )
+            self.encoder=self.encoder.half() # 将原来的float32转换为float16编码器
         elif cnnlayertype=='adder':
             self.encoder = nn.Sequential(
                 adder.adder2d(num_channels, d, kernel_size=4, stride=2, padding=1),
@@ -296,6 +297,7 @@ class VQ_CVAE(nn.Module):
                 ResBlock(d, d, bn=bn),
                 nn.BatchNorm2d(d),
             )
+            # self.encoder=self.encoder.half() # 将原来的float32转换为float16编码器
         self.decoder = nn.Sequential(
             ResBlock(d, d),
             nn.BatchNorm2d(d),
@@ -326,6 +328,7 @@ class VQ_CVAE(nn.Module):
         torch.fmod(self.emb.weight, 0.04)
 
     def encode(self, x):
+        x = x.half()####x从32位浮点数（float32）输入数据转换为16位浮点数（float16），以匹配编码器的数据类型
         return self.encoder(x)
 
     def decode(self, x):
@@ -367,4 +370,6 @@ class VQ_CVAE(nn.Module):
 
 
 def convVAE(**kwargs):
-    return VQ_CVAE(d=emb_dim,k=emb_num,commit_coef=commit_beta,**kwargs)
+    model=VQ_CVAE(d=emb_dim,k=emb_num,commit_coef=commit_beta,**kwargs)
+    # model.half()
+    return model

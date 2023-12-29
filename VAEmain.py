@@ -93,7 +93,7 @@ def train(epoch):
         images, labels = Variable(images).cuda(), Variable(labels).cuda()
  
         optimizer.zero_grad()
- 
+        # imageshalf= images.half()
         output = net(images)
         loss = net.loss_function(images, output[0], output[1], output[2])
         # loss = criterion(output, labels)
@@ -131,8 +131,8 @@ def test(epoch):
     if acc_best < acc:
         acc_best = acc
     print('Test Avg. Loss: %f, mse: %f' % (avg_loss.data.item(), mse))
-    #将下面的数据写入文档test.svg文件中
-    with open(args.output_dir + 'new_CIFAR10_addernet_VQVAE_epoch100.csv', 'a') as f:
+    #将下面的数据写入文档test.csv文件中
+    with open(args.output_dir + 'test_floatENC_CIFAR10_CNNnet_VQVAE_epoch100.csv', 'a') as f:
         f.write(str(epoch) + ' ' + str(avg_loss.data.item()) + ' ' + str(mse) + '\n')
 
 
