@@ -148,47 +148,30 @@ class ResBlock(nn.Module):
         self.dequant = torch.quantization.DeQuantStub()
         if mid_channels is None:
             mid_channels = out_channels
-        if cnnlayertype=='conv':
-            layers = [
-                nn.ReLU(),
-                nn.Conv2d(in_channels, mid_channels,
-                          kernel_size=3, stride=1, padding=1),
-                # adder.adder2d(in_channels, mid_channels,
-                #         kernel_size=3, stride=1, padding=1),
-                nn.ReLU(),
-                nn.Conv2d(mid_channels, out_channels,
-                          kernel_size=1, stride=1, padding=0)
-                # adder.adder2d(mid_channels, out_channels,
-                #         kernel_size=1, stride=1, padding=0)        
-            ]
-        elif cnnlayertype=='adder':
-            layers = [
-                nn.ReLU(),
-                adder.adder2d(in_channels, mid_channels,
-                        kernel_size=3, stride=1, padding=1),
-                nn.ReLU(),
-                adder.adder2d(mid_channels, out_channels,
-                        kernel_size=1, stride=1, padding=0)        
-            ]
+
+        # layers = [
+        #     nn.ReLU(),
+        #     nn.Conv2d(in_channels, mid_channels,
+        #               kernel_size=3, stride=1, padding=1),
+
+        #     nn.ReLU(),
+        #     nn.Conv2d(mid_channels, out_channels,
+        #               kernel_size=1, stride=1, padding=0)
+        # ]
+
+        layers = [
+            nn.ReLU(),
+            adder.adder2d(in_channels, mid_channels,
+                    kernel_size=3, stride=1, padding=1),
+            nn.ReLU(),
+            adder.adder2d(mid_channels, out_channels,
+                    kernel_size=1, stride=1, padding=0)        
+        ]
         if bn:
             layers.insert(2, nn.BatchNorm2d(out_channels))
         self.convs = nn.Sequential(*layers)
 
     def forward(self, x):
-        # if(x.is_quantized):
-        #     temp = x.dequantize()
-        #     temp = temp + self.convs(x).dequantize()
-
-        #     min_val, max_val = temp.min(), temp.max()
-        #     scale = (max_val - min_val) / (255 - 0)
-        #     zero_point = 0
-        #     # scale, zero_point = 0.004, 0
-        #     dtype = torch.quint8
-        #     temp = torch.quantize_per_tensor(temp, scale, zero_point, dtype)
-        #     return temp
-        # else:
-        #     return x + self.convs(x)
-
         if(x.is_quantized):
             temp = x.dequantize()
             cnvdeq=self.convs(x).dequantize()
@@ -205,104 +188,16 @@ class ResBlock(nn.Module):
             return x + self.convs(x)
         
 
-class CVAE(AbstractAutoEncoder):
-    def __init__(self, d, kl_coef=0.1, num_channels=n_channels, **kwargs):
-        super(CVAE, self).__init__()
-
-        self.encoder = nn.Sequential(
-            nn.Conv2d(num_channels, d // 2, kernel_size=4,
-                      stride=2, padding=1, bias=False),
-            nn.BatchNorm2d(d // 2),
-            nn.ReLU(inplace=True),
-            nn.Conv2d(d // 2, d, kernel_size=4,
-                      stride=2, padding=1, bias=False),
-            nn.BatchNorm2d(d),
-            nn.ReLU(inplace=True),
-            ResBlock(d, d, bn=True),
-            nn.BatchNorm2d(d),
-            ResBlock(d, d, bn=True),
-        )
-        self.decoder = nn.Sequential(
-            ResBlock(d, d, bn=True),
-            nn.BatchNorm2d(d),
-            ResBlock(d, d, bn=True),
-            nn.BatchNorm2d(d),
-
-            nn.ConvTranspose2d(d, d // 2, kernel_size=4,
-                               stride=2, padding=1, bias=False),
-            nn.BatchNorm2d(d//2),
-            nn.ReLU(inplace=True),
-            nn.ConvTranspose2d(d // 2, num_channels, kernel_size=4,
-                               stride=2, padding=1, bias=False),
-        )
-        self.f = 8
-        self.d = d
-        self.fc11 = nn.Linear(d * self.f ** 2, d * self.f ** 2)
-        self.fc12 = nn.Linear(d * self.f ** 2, d * self.f ** 2)
-        self.kl_coef = kl_coef
-        self.kl_loss = 0
-        self.mse = 0
-
-    def encode(self, x):
-        h1 = self.encoder(x)
-        h1 = h1.view(-1, self.d * self.f ** 2)
-        return self.fc11(h1), self.fc12(h1)
-
-    def reparameterize(self, mu, logvar):
-        if self.training:
-            std = logvar.mul(0.5).exp_()
-            eps = std.new(std.size()).normal_()
-            return eps.mul(std).add_(mu)
-        else:
-            return mu
-
-    def decode(self, z):
-        z = z.view(-1, self.d, self.f, self.f)
-        h3 = self.decoder(z)
-        return torch.tanh(h3)
-
-    def forward(self, x):
-        mu, logvar = self.encode(x)
-        z = self.reparameterize(mu, logvar)
-        return self.decode(z), mu, logvar
-
-    def sample(self, size):
-        sample = torch.randn(size, self.d * self.f ** 2, requires_grad=False)
-        if self.cuda():
-            sample = sample.cuda()
-        return self.decode(sample).cpu()
-
-    def loss_function(self, x, recon_x, mu, logvar):
-        self.mse = F.mse_loss(recon_x, x)
-        batch_size = x.size(0)
-
-        # see Appendix B from VAE paper:
-        # Kingma and Welling. Auto-Encoding Variational Bayes. ICLR, 2014
-        # https://arxiv.org/abs/1312.6114
-        # 0.5 * sum(1 + log(sigma^2) - mu^2 - sigma^2)
-        self.kl_loss = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
-        # Normalise by same number of elements as in reconstruction
-        self.kl_loss /= batch_size * 3 * 1024
-
-        # return mse
-        return self.mse + self.kl_coef * self.kl_loss
-
-    def latest_losses(self):
-        return {'mse': self.mse, 'kl': self.kl_loss}
-
-
-
-
 class VQ_CVAE(nn.Module):
     def __init__(self, d, k, bn=True, vq_coef=1, commit_coef=0.5, num_channels=n_channels, **kwargs):
         super(VQ_CVAE, self).__init__()
         self.quant = torch.quantization.QuantStub()
         self.dequant = torch.quantization.DeQuantStub()
 
-        self.conve1 = nn.Conv2d(num_channels, d, kernel_size=4, stride=2, padding=1)
+        self.conve1 = adder.adder2d(num_channels, d, kernel_size=4, stride=2, padding=1)
         self.bne1 = nn.BatchNorm2d(d)
         self.relue1 =nn.ReLU(inplace=True)
-        self.conve2 = nn.Conv2d(d, d, kernel_size=4, stride=2, padding=1)
+        self.conve2 = adder.adder2d(d, d, kernel_size=4, stride=2, padding=1)
         self.bne2= nn.BatchNorm2d(d)
         self.relue2 =nn.ReLU(inplace=True)
         self.resblocke1 = ResBlock(d, d, bn=bn)
@@ -311,65 +206,20 @@ class VQ_CVAE(nn.Module):
         self.bne4 = nn.BatchNorm2d(d)
 
 
-        # self.convd1 = nn.Conv2d(d, d, kernel_size=3, stride=1, padding=1)
-        # self.convd2 = nn.Conv2d(d, num_channels, kernel_size=3, stride=1, padding=1)
-        # self.upsample1=nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False)
-        # self.upsample2=nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False)
+        self.convd1 = adder.adder2d(d, d, kernel_size=3, stride=1, padding=1)#采用adder网络替代普通的卷积层
+        self.convd2 = adder.adder2d(d, num_channels, kernel_size=3, stride=1, padding=1)#采用adder网络替代普通的卷积层
+        # self.convd1 = nn.Conv2d(d, d, kernel_size=3, stride=1, padding=1)#采用普通的卷积层解码
+        # self.convd2 = nn.Conv2d(d, num_channels, kernel_size=3, stride=1, padding=1)#采用普通的卷积层解码
+        self.upsample1=nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False)
+        self.upsample2=nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False)
         
         self.resblockd1 = ResBlock(d, d)
         self.bnd1 = nn.BatchNorm2d(d)
         self.resblockd2 = ResBlock(d, d)
-        self.convtranspose1=nn.ConvTranspose2d(d, d, kernel_size=4, stride=2, padding=1)
+        # self.convtranspose1=nn.ConvTranspose2d(d, d, kernel_size=4, stride=2, padding=1)
         self.bnd2 = nn.BatchNorm2d(d)
         self.relud1 = nn.ReLU(inplace=True)
-        self.convtranspose2=nn.ConvTranspose2d(d, num_channels, kernel_size=4, stride=2, padding=1)
-
-
-        # if cnnlayertype=='conv':
-        #     self.encoder = nn.Sequential(
-        #         nn.Conv2d(num_channels, d, kernel_size=4, stride=2, padding=1),
-        #         # adder.adder2d(num_channels, d, kernel_size=4, stride=2, padding=1),
-        #         nn.BatchNorm2d(d),
-        #         nn.ReLU(inplace=True),
-        #         nn.Conv2d(d, d, kernel_size=4, stride=2, padding=1),
-        #         # adder.adder2d(d, d, kernel_size=4, stride=2, padding=1),
-        #         nn.BatchNorm2d(d),
-        #         nn.ReLU(inplace=True),
-        #         ResBlock(d, d, bn=bn),
-        #         nn.BatchNorm2d(d),
-        #         ResBlock(d, d, bn=bn),
-        #         nn.BatchNorm2d(d),
-        #     )
-        # elif cnnlayertype=='adder':
-        #     self.encoder = nn.Sequential(
-        #         adder.adder2d(num_channels, d, kernel_size=4, stride=2, padding=1),
-        #         nn.BatchNorm2d(d),
-        #         nn.ReLU(inplace=True),
-        #         adder.adder2d(d, d, kernel_size=4, stride=2, padding=1),
-        #         nn.BatchNorm2d(d),
-        #         nn.ReLU(inplace=True),
-        #         ResBlock(d, d, bn=bn),
-        #         nn.BatchNorm2d(d),
-        #         ResBlock(d, d, bn=bn),
-        #         nn.BatchNorm2d(d),
-        #     )
-        #     # self.encoder=self.encoder.half() # 将原来的float32转换为float16编码器
-
-        # self.decoder = nn.Sequential(
-        #     ResBlock(d, d),
-        #     nn.BatchNorm2d(d),
-        #     ResBlock(d, d),
-        #     # nn.BatchNorm2d(d),#后加的
-        #     # nn.ReLU(inplace=True),# 后加的
-        #     nn.ConvTranspose2d(d, d, kernel_size=4, stride=2, padding=1),
-        #     # nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True),  # 上采样至原始尺寸的两倍
-        #     # nn.Conv2d(d, d, kernel_size=3, stride=1, padding=1),  # 普通的卷积层
-        #     nn.BatchNorm2d(d),
-        #     nn.ReLU(inplace=True),
-        #     nn.ConvTranspose2d(d, num_channels, kernel_size=4, stride=2, padding=1),
-        #     # nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True),  # 再次上采样至原始尺寸的两倍
-        #     # nn.Conv2d(d, num_channels, kernel_size=3, stride=1, padding=1),  # 普通的卷积层
-        # )
+        # self.convtranspose2=nn.ConvTranspose2d(d, num_channels, kernel_size=4, stride=2, padding=1)
         
         self.d = d
         self.emb = NearestEmbed(k, d)
@@ -420,36 +270,18 @@ class VQ_CVAE(nn.Module):
         y =self.bnd1(y)
         y =self.resblockd2(y)
         
-        y=self.convtranspose1(y)#这里是转置卷积层
-        # y =self.upsample1(y)#这里是上采样
-        # y =self.convd1(y)#这里是普通的卷积层
+        # y=self.convtranspose1(y)#这里是转置卷积层
+        y =self.upsample1(y)#这里是上采样
+        y =self.convd1(y)#这里是普通的卷积层
         y =self.bnd2(y)
         y =self.relud1(y)
 
-        y=self.convtranspose2(y)#这里是转置卷积层
-        # y =self.upsample2(y)#这里是上采样
-        # y =self.convd2(y)#这里是普通的卷积层
+        # y=self.convtranspose2(y)#这里是转置卷积层
+        y =self.upsample2(y)#这里是上采样
+        y =self.convd2(y)#这里是普通的卷积层
         y=torch.tanh(y)
         y =self.dequant(y)
         return y, z_e, emb, argmin
-
-    # def forward(self, x):
-    #     z_e = self.encode(x)
-    #     self.f = z_e.shape[-1]
-    #     z_q, argmin = self.emb(z_e, weight_sg=True)
-    #     emb, _ = self.emb(z_e.detach())
-    #     return self.decode(z_q), z_e, emb, argmin
-    
-
-
-
-    def encode(self, x):
-        return self.encoder(x)
-
-    def decode(self, x):
-        return torch.tanh(self.decoder(x))
-
-  
 
 
     def sample(self, size):

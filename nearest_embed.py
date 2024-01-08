@@ -35,9 +35,23 @@ class NearestEmbedFunc(Function):
                 emb.shape[0], *([1] * num_arbitrary_dims), emb.shape[1])
         else:
             emb_expanded = emb
+  
+        if(x_expanded.is_quantized):
+            # temp = x_expanded.dequantize()
+            # temp = temp - emb_expanded.dequantize()
+            # min_val, max_val = temp.min(), temp.max()
+            # scale = (max_val - min_val) / (255 - 0)
+            # zero_point = 0 - min_val / scale
+            # dtype = torch.quint8
+            # dist = torch.quantize_per_tensor(temp, scale, zero_point, dtype)
+            
+            dist = torch.norm(x_expanded.dequantize() - emb_expanded, 2, 1)
+        else:
+            dist = torch.norm(x_expanded - emb_expanded, 2, 1)
+        
 
         # find nearest neighbors
-        dist = torch.norm(x_expanded - emb_expanded, 2, 1)
+        # dist = torch.norm(x_expanded - emb_expanded, 2, 1)
         _, argmin = dist.min(-1)
         shifted_shape = [input.shape[0], *
                          list(input.shape[2:]), input.shape[1]]
