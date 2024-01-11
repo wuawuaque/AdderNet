@@ -21,7 +21,12 @@ def adder2d_function(X, W, stride=1, padding=0):
     w_out = (w_x - w_filter + 2 * padding) / stride + 1
 
     h_out, w_out = int(h_out), int(w_out)
-    X_col = torch.nn.functional.unfold(X.view(1, -1, h_x, w_x), h_filter, dilation=1, padding=padding, stride=stride).view(n_x, -1, h_out*w_out)
+    
+    Xview=X.reshape(1, -1, h_x, w_x)
+    unfolded_X = torch.nn.functional.unfold(Xview, h_filter, dilation=1, padding=padding, stride=stride)
+    X_col = unfolded_X.view(n_x, -1, h_out*w_out)
+
+    # X_col = torch.nn.functional.unfold(X.view(1, -1, h_x, w_x), h_filter, dilation=1, padding=padding, stride=stride).view(n_x, -1, h_out*w_out)
     X_col = X_col.permute(1,2,0).contiguous().view(X_col.size(1),-1)
     W_col = W.view(n_filters, -1)
     
@@ -35,8 +40,17 @@ def adder2d_function(X, W, stride=1, padding=0):
 class adder(Function):
     @staticmethod
     def forward(ctx, W_col, X_col):
+        adderquant = torch.quantization.QuantStub()  # Instantiate QuantStub
+        adderdequant = torch.quantization.DeQuantStub()  # Instantiate DeQuantStub
+        # Quantize input tensors
+        W_col_quant = adderquant(W_col)
+        X_col_quant = adderquant(X_col)
+        
+        output_quant = -(W_col_quant.unsqueeze(2) - X_col_quant.unsqueeze(0)).abs().sum(1)
+        output = adderdequant(output_quant)
+
         ctx.save_for_backward(W_col,X_col)
-        output = -(W_col.unsqueeze(2)-X_col.unsqueeze(0)).abs().sum(1)
+        # output = -(W_col.unsqueeze(2)-X_col.unsqueeze(0)).abs().sum(1)
         return output
 
     @staticmethod
@@ -52,6 +66,9 @@ class adder2d(nn.Module):
 
     def __init__(self,input_channel,output_channel,kernel_size, stride=1, padding=0, bias = False):
         super(adder2d, self).__init__()
+        self.quantadd = torch.quantization.QuantStub()
+        self.dequantadd = torch.quantization.DeQuantStub()
+        self.quantaddout = torch.quantization.QuantStub()
         self.stride = stride
         self.padding = padding
         self.input_channel = input_channel
@@ -64,10 +81,15 @@ class adder2d(nn.Module):
             self.b = torch.nn.Parameter(nn.init.uniform_(torch.zeros(output_channel)))
 
     def forward(self, x):
+        # x=self.quantadd(x)
+        x=self.dequantadd(x)
+        # adder2=self.quant2(self.adder)
+        # adder3=self.dequant2(adder2)
         output = adder2d_function(x,self.adder, self.stride, self.padding)
+        # output = adder2d_function(x3,self.adder, self.stride, self.padding)
         if self.bias:
             output += self.b.unsqueeze(0).unsqueeze(2).unsqueeze(3)
-        
-        return output
+        output2=self.quantaddout(output)
+        return output2
     
     

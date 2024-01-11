@@ -133,7 +133,7 @@ def test(epoch):
         acc_best = acc
     print('Test Avg. Loss: %f, mse: %f' % (avg_loss.data.item(), avg_nmse))
     #将下面的数据写入文档test.csv文件中
-    with open(args.output_dir + 'addnet_useCNN_sub_decoder_noCNNtans_epoch50.csv', 'a') as f:
+    with open(args.output_dir + 'addnet_sub_Encoder_all_noCNNtans_epoch50.csv', 'a') as f:
         f.write(str(epoch) + ' ' + str(avg_loss.data.item()) + ' ' + str(avg_nmse) + '\n')
 
 

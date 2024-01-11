@@ -85,7 +85,7 @@ optimizer = torch.optim.SGD(net.parameters(), lr=0.1, momentum=0.9, weight_decay
 def adjust_learning_rate(optimizer, epoch):
     """For resnet, the lr starts from 0.1, and is divided by 10 at 80 and 120 epochs"""
     # lr = 0.05 * (1+math.cos(float(epoch)/400*math.pi))
-    lr = 0.05 * (1+math.cos(float(epoch)/epochsum*math.pi))
+    lr = 0.05 * (1 + math.cos(float(epoch)/epochsum*math.pi))
     for param_group in optimizer.param_groups:
         param_group['lr'] = lr
         
@@ -103,7 +103,6 @@ def train(epoch):
         loss = net.loss_function(images, output[0], output[1], output[2])
         # loss = criterion(output, labels)
         nmse= torch.sum((output[0] - images) ** 2) / torch.sum(images ** 2)
-
         loss_list.append(loss.data.item())
         batch_list.append(i+1)
  
@@ -141,10 +140,24 @@ def test(epoch):
         f.write(str(epoch) + ' ' + str(avg_loss.data.item()) + ' ' + str(mse) + '\n')
 
 def calibrate(model, data_loader): # 定义一个校准函数，输入为模型和数据加载器
-  with torch.no_grad(): # 不需要计算梯度
-    for images, labels in data_loader: # 遍历数据
+    total_mse = 0
+    avg_loss = 0.0
+    itertime = 0
+    with torch.no_grad(): # 不需要计算梯度
+        for images, labels in data_loader: # 遍历数据
     #   images = images.cuda() # 将数据移动到GPU
-      output = model(images) # 前向传播
+            output = model(images) # 前向传播
+            avg_loss =0 #测试去掉embedding层的mse
+            # pred = output.data.max(1)[1]
+            #归一化mse求和
+            # dequantized_output = output[0].dequantize()
+            dequantized_output = output[0]
+            total_mse += torch.sum((dequantized_output - images) ** 2) / torch.sum(images ** 2)
+            itertime += 1
+    avg_loss /= itertime
+    mse = total_mse / itertime
+    # print('Test Avg. Loss: %f, mse: %f' % (avg_loss.data.item(), mse))#测试去掉embedding层的mse
+    print('Calibration Test Avg., mse: %f' % ( mse))#测试去掉embedding层的mse
     print('Calibration done')
 
 def quant_test(epoch):
@@ -166,14 +179,14 @@ def quant_test(epoch):
     net_fp32_prepared.eval()
 
     net_quantized = torch.quantization.convert(net_fp32_prepared, inplace=False) # 转换为量化后的模型
-    # net_quantized.cpu()
-    # net_quantized.eval()
+    #  net_quantized.eval()
     # for name, module in net_quantized.named_modules():
     #     print(f"{name} is a Conv2d/Linear layer and its weight dtype is: {module}")
 
 #     qconfig = torch.quantization.QConfig(activation=torch.quantization.MinMaxObserver.with_args(dtype=torch.qint8), weight=torch.quantization.MinMaxObserver.with_args(dtype=torch.qint8))
 # # net是您的模型，calibration_data是校准数据，calibration_func是校准函数
-#     net_quantized = torch.quantization.quantize(net, qconfig)
+#     net_quantized = torch.quantization.quantize(net, qconfig)# net_quantized.cpu()
+    #
 
     total_mse = 0
     avg_loss = 0.0
@@ -211,7 +224,7 @@ def quant_test(epoch):
 
 
 def loadweight():
-    net.load_state_dict(torch.load(args.output_dir + 'cnn40_net_dict'))
+    net.load_state_dict(torch.load(args.output_dir + 'adder_net_dict'))
     # net = torch.load(args.output_dir + 'cnn40_net')
     print('NET of torch loaded')
 

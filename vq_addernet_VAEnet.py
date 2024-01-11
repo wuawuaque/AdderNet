@@ -140,12 +140,70 @@ class AbstractAutoEncoder(nn.Module):
         return
 
 
-
 class ResBlock(nn.Module):
     def __init__(self, in_channels, out_channels, mid_channels=None, bn=False):
         super(ResBlock, self).__init__()
-        self.quant = torch.quantization.QuantStub()
-        self.dequant = torch.quantization.DeQuantStub()
+        self.quant_rb = torch.quantization.QuantStub()
+        self.dequant_rb = torch.quantization.DeQuantStub()
+        self.dequant_cnv = torch.quantization.DeQuantStub()
+        if mid_channels is None:
+            mid_channels = out_channels
+
+        layers = [
+            nn.ReLU(),
+            nn.Conv2d(in_channels, mid_channels,
+                      kernel_size=3, stride=1, padding=1),
+
+            nn.ReLU(),
+            nn.Conv2d(mid_channels, out_channels,
+                      kernel_size=1, stride=1, padding=0)
+        ]
+
+        # layers = [
+        #     nn.ReLU(),
+        #     adder.adder2d(in_channels, mid_channels,
+        #             kernel_size=3, stride=1, padding=1),
+        #     nn.ReLU(),
+        #     adder.adder2d(mid_channels, out_channels,
+        #             kernel_size=1, stride=1, padding=0)        
+        # ]
+        if bn:
+            layers.insert(2, nn.BatchNorm2d(out_channels))
+        self.convs = nn.Sequential(*layers)
+
+    def forward(self, x):
+        fp32x=self.dequant_rb(x)
+        cnvtemp=self.convs(x)
+        fp32cnvtemp=self.dequant_cnv(cnvtemp)
+        fp32output = fp32x + fp32cnvtemp
+        output = self.quant_rb(fp32output)
+        return output
+        # if(x.is_quantized):
+        #     temp=self.dequant3(x)
+        #     cnvdeq=self.dequant3(self.convs(x))
+        #     output = temp + cnvdeq
+        #     # temp = x.dequantize()
+        #     # cnvdeq=self.convs(x).dequantize()
+        #     # temp = temp + cnvdeq
+        #     # min_val, max_val = temp.min(), temp.max()
+        #     # scale = (max_val - min_val) / (255 - 0)
+        #     # zero_point =0 - min_val / scale
+        #     # # scale, zero_point = 0.004, 0
+        #     # dtype = torch.quint8
+        #     # temp = torch.quantize_per_tensor(temp, scale, zero_point, dtype)
+        #     output=self.quant3(output)
+        #     return output
+        
+        # else:
+        #     return x + self.convs(x)
+        
+
+class adderResBlock(nn.Module):
+    def __init__(self, in_channels, out_channels, mid_channels=None, bn=False):
+        super(adderResBlock, self).__init__()
+        self.quant_rb = torch.quantization.QuantStub()
+        self.dequant_rb = torch.quantization.DeQuantStub()
+        self.dequant_cnv = torch.quantization.DeQuantStub()
         if mid_channels is None:
             mid_channels = out_channels
 
@@ -164,6 +222,7 @@ class ResBlock(nn.Module):
             adder.adder2d(in_channels, mid_channels,
                     kernel_size=3, stride=1, padding=1),
             nn.ReLU(),
+
             adder.adder2d(mid_channels, out_channels,
                     kernel_size=1, stride=1, padding=0)        
         ]
@@ -172,44 +231,42 @@ class ResBlock(nn.Module):
         self.convs = nn.Sequential(*layers)
 
     def forward(self, x):
-        if(x.is_quantized):
-            temp = x.dequantize()
-            cnvdeq=self.convs(x).dequantize()
-            temp = temp + cnvdeq
-
-            min_val, max_val = temp.min(), temp.max()
-            scale = (max_val - min_val) / (255 - 0)
-            zero_point =0 - min_val / scale
-            # scale, zero_point = 0.004, 0
-            dtype = torch.quint8
-            temp = torch.quantize_per_tensor(temp, scale, zero_point, dtype)
-            return temp
-        else:
-            return x + self.convs(x)
+        # if(x.is_quantized):
+        tempx=self.dequant_rb(x)
+        cnvtemp=self.convs(tempx)
+        cnvtemp=self.dequant_cnv(cnvtemp)
+        output = tempx + cnvtemp
+        output = self.quant_rb(output)
+        return output
+     
         
 
 class VQ_CVAE(nn.Module):
     def __init__(self, d, k, bn=True, vq_coef=1, commit_coef=0.5, num_channels=n_channels, **kwargs):
         super(VQ_CVAE, self).__init__()
-        self.quant = torch.quantization.QuantStub()
-        self.dequant = torch.quantization.DeQuantStub()
+        self.quant1 = torch.quantization.QuantStub()
+        self.dequant1 = torch.quantization.DeQuantStub()
+        self.quant2 = torch.quantization.QuantStub()
+        self.dequant2 = torch.quantization.DeQuantStub()
 
-        self.conve1 = adder.adder2d(num_channels, d, kernel_size=4, stride=2, padding=1)
+        # self.conve1 = nn.Conv2d(num_channels, d, kernel_size=4, stride=2, padding=1)
+        self.conve1 = adder.adder2d(num_channels, d, kernel_size=4, stride=2, padding=1)#采用adder网络
         self.bne1 = nn.BatchNorm2d(d)
         self.relue1 =nn.ReLU(inplace=True)
-        self.conve2 = adder.adder2d(d, d, kernel_size=4, stride=2, padding=1)
+        # self.conve2 = nn.Conv2d(d, d, kernel_size=4, stride=2, padding=1)
+        self.conve2 = adder.adder2d(d, d, kernel_size=4, stride=2, padding=1)#采用adder网络
         self.bne2= nn.BatchNorm2d(d)
         self.relue2 =nn.ReLU(inplace=True)
-        self.resblocke1 = ResBlock(d, d, bn=bn)
+        self.resblocke1 = adderResBlock(d, d, bn=bn)
         self.bne3 = nn.BatchNorm2d(d)
-        self.resblocke2 = ResBlock(d, d, bn=bn)
+        self.resblocke2 = adderResBlock(d, d, bn=bn)
         self.bne4 = nn.BatchNorm2d(d)
 
 
-        self.convd1 = adder.adder2d(d, d, kernel_size=3, stride=1, padding=1)#采用adder网络替代普通的卷积层
-        self.convd2 = adder.adder2d(d, num_channels, kernel_size=3, stride=1, padding=1)#采用adder网络替代普通的卷积层
-        # self.convd1 = nn.Conv2d(d, d, kernel_size=3, stride=1, padding=1)#采用普通的卷积层解码
-        # self.convd2 = nn.Conv2d(d, num_channels, kernel_size=3, stride=1, padding=1)#采用普通的卷积层解码
+        # self.convd1 = adder.adder2d(d, d, kernel_size=3, stride=1, padding=1)#采用adder网络替代普通的卷积层
+        # self.convd2 = adder.adder2d(d, num_channels, kernel_size=3, stride=1, padding=1)#采用adder网络替代普通的卷积层
+        self.convd1 = nn.Conv2d(d, d, kernel_size=3, stride=1, padding=1)#采用普通的卷积层解码
+        self.convd2 = nn.Conv2d(d, num_channels, kernel_size=3, stride=1, padding=1)#采用普通的卷积层解码
         self.upsample1=nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False)
         self.upsample2=nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False)
         
@@ -243,13 +300,21 @@ class VQ_CVAE(nn.Module):
 
         
     def forward(self, x):
-        x = self.quant(x)
-        # 以下是编码器  
-        x =self.conve1(x)
-        x =self.bne1(x)
+        x = self.quant1(x)
+        # 以下是编码器
+        # xforadd1 = self.dequant(x0)
+
+        x1 =self.conve1(x)
+        # x1 =self.quant1(x1)
+        
+        x =self.bne1(x1)
         x =self.relue1(x)
-        x =self.conve2(x)
-        x =self.bne2(x)
+
+        # x =self.dequant2(x)
+        x2 =self.conve2(x)
+        # x2 =self.quant2(x2)
+
+        x =self.bne2(x2)
         x =self.relue2(x)
         x =self.resblocke1(x)
         x =self.bne3(x)
@@ -264,7 +329,7 @@ class VQ_CVAE(nn.Module):
         emb, _ = self.emb(z_e.detach())
         
 
-        z_qq = self.quant(z_q)
+        z_qq = self.quant2(z_q)
         # #以下是解码器
         y =self.resblockd1(z_qq)
         y =self.bnd1(y)
@@ -280,7 +345,7 @@ class VQ_CVAE(nn.Module):
         y =self.upsample2(y)#这里是上采样
         y =self.convd2(y)#这里是普通的卷积层
         y=torch.tanh(y)
-        y =self.dequant(y)
+        y =self.dequant2(y)
         return y, z_e, emb, argmin
 
 
